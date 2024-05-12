@@ -84,13 +84,13 @@ $low_cpu_temp = 35;		# will go LOW when we fall below 35 again
 ## This is the temperature that we regard as being uncomfortable. The higher this is the
 ## more silent your system.
 ## Note, it is possible for your HDs to go above this... but if your cooling is good, they shouldn't.
-$hd_max_allowed_temp = 38;	# celsius. you will hit 100% duty cycle when you HDs hit this temp.
+$hd_max_allowed_temp = 40;	# celsius. you will hit 100% duty cycle when you HDs hit this temp.
 
 ## CPU TEMP TO OVERRIDE HD FANS
 ## when the CPU climbs above this temperature, the HD fans will be overridden
 ## this prevents the HD fans from spinning up when the CPU fans are capable of providing 
 ## sufficient cooling.
-$cpu_hd_override_temp = 62;
+$cpu_hd_override_temp = 65;
 
 ## CPU/HD SHARED COOLING
 ## If your HD fans contribute to the cooling of your CPU you should set this value.
@@ -107,8 +107,8 @@ $hd_fans_cool_cpu = 1;		# 1 if the hd fans should spin up to cool the cpu, 0 oth
 ## You need to determine the actual max fan speeds that are achieved by the fans
 ## Connected to the cpu_fan_header and the hd_fan_header.
 ## These values are used to verify high/low fan speeds and trigger a BMC reset if necessary.
-$cpu_max_fan_speed 	= 1700;
-$hd_max_fan_speed 	= 1400;
+$cpu_max_fan_speed 	= 7500;
+$hd_max_fan_speed 	= 7500;
 
 
 ## CPU FAN DUTY LEVELS
@@ -140,8 +140,8 @@ $hd_fan_zone = 1;
 ## these are the fan headers which are used to verify the fan zone is high. FAN1+ are all in Zone 0, FANA is Zone 1.
 ## cpu_fan_header should be in the cpu_fan_zone
 ## hd_fan_header should be in the hd_fan_zone
-$cpu_fan_header = "FAN1";	
-$hd_fan_header = "FANA";
+$cpu_fan_header = "FANA", "FANB";	
+$hd_fan_header = "FAN1", "FAN2", "FAN3", "FAN4", "FAN5";
 
 
 ################
@@ -292,7 +292,7 @@ sub get_hd_list
 	my $disk_list_cmd = $platform eq "FreeBSD" ?
 		"camcontrol devlist | sed 's:.*(::;s:).*::;s:,pass[0-9]*::;s:pass[0-9]*,::' | egrep '^[a]*da[0-9]+\$' | tr '\n' ' '"
 	:
-		"lsblk -o NAME --nodeps --noheading | egrep 'sd[a-z]+' | tr '\n' ' '"
+		"lsblk -o NAME --nodeps --noheading | egrep 'sd[a-z]+|nvme[0-9]+' | tr '\n' ' '"
 	;
 
 	my $disk_list = `$disk_list_cmd`;
@@ -316,7 +316,7 @@ sub get_hd_temp
 	{
 		my $disk_dev = "/dev/$item";
 
-		my $command = "smartctl -A $disk_dev | grep Temperature_Celsius";
+		my $command = "smartctl -A $disk_dev | grep -E 'Temperature_Celsius|"Current Drive Temperature"|"Temperature Sensor 1:"'";
 		dprint( 3, "$command\n" );
 
 		my $output = `$command`;
