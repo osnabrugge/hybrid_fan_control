@@ -83,7 +83,14 @@ get_hd_temp( hd_list );
 
 sub get_hd_list
 {
-	my $disk_list = `camcontrol devlist | sed 's:.*(::;s:).*::;s:,pass[0-9]*::;s:pass[0-9]*,::' | egrep '^[a]*da[0-9]+\$' | tr '\012' ' '`;
+	# the disk_list_cmd needs to return a list of space separated disks to monitor, ie "sda sdb sdc"
+	my $disk_list_cmd = $platform eq "FreeBSD" ?
+		"camcontrol devlist | sed 's:.*(::;s:).*::;s:,pass[0-9]*::;s:pass[0-9]*,::' | egrep '^[a]*da[0-9]+\$' | tr '\n' ' '"
+	:
+		"lsblk -o NAME --nodeps --noheading | egrep 'sd[a-z]+|nvme[0-9]+' | tr '\n' ' '"
+	;
+
+	my $disk_list = `$disk_list_cmd`;
 	dprint(3,"$disk_list\n");
 
 	my @vals = split(" ", $disk_list);
@@ -98,36 +105,50 @@ sub get_hd_list
 
 sub get_hd_temp
 {
-	my $max_temp = 0;
-	
-	foreach my $item (@hd_list)
-	{
-		my $disk_dev = "/dev/$item";
-		my $command = "/usr/local/sbin/smartctl -A $disk_dev | grep Temperature_Celsius";
- 		
-		dprint( 3, "$command\n" );
-		
-		my $output = `$command`;
+    my $max_temp = 0;
+    
+    foreach my $item (@hd_list)
+    {
+        my $disk_dev = "/dev/$item";
+        my $command;
 
-		dprint( 2, "$output");
+        if ($item =~ /nvme/) {
+            $command = "nvme smart-log $disk_dev | grep \"temperature\"";
+        } else {
+            $command = "smartctl -A $disk_dev | grep -E 'Temperature_Celsius|\"Current Drive Temperature\"|\"Temperature Sensor 1:\"'";
+        }
 
-		my @vals = split(" ", $output);
+        dprint( 3, "$command\n" );
 
-		# grab 10th item from the output, which is the hard drive temperature (on Seagate NAS HDs)
-  		my $temp = "$vals[9]";
-		chomp $temp;
-		
-		if( $temp )
-		{
-			dprint( 1, "$disk_dev: $temp\n");
-			
-			$max_temp = $temp if $temp > $max_temp;
-		}
-	}
+        my $output = `$command`;
+        dprint( 2, "$output");
 
-	dprint(0, "Maximum HD Temperature: $max_temp\n");
+        my $temp;
 
-	return $max_temp;
+        if ($item =~ /nvme/) {
+            ($temp) = $output =~ /temperature\s+:\s+(\d+)/;
+            if (!$temp) {
+                dprint(1, "Failed to parse temperature for $disk_dev from output: $output\n");
+            }
+        } else {
+            my @vals = split(" ", $output);
+            $temp = $vals[9];
+        }
+
+        chomp $temp;
+        dprint( 3, "temp: $temp\n" );
+
+        if( $temp )
+        {
+            dprint( 1, "$disk_dev: $temp\n");
+            
+            $max_temp = $temp if $temp > $max_temp;
+        }
+    }
+
+    dprint(0, "Maximum HD Temperature: $max_temp\n");
+
+    return $max_temp;
 }
 
 

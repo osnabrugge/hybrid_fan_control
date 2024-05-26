@@ -107,22 +107,36 @@ $hd_fans_cool_cpu = 1;		# 1 if the hd fans should spin up to cool the cpu, 0 oth
 ## You need to determine the actual max fan speeds that are achieved by the fans
 ## Connected to the cpu_fan_header and the hd_fan_header.
 ## These values are used to verify high/low fan speeds and trigger a BMC reset if necessary.
-$cpu_max_fan_speed 	= 7500;
-$hd_max_fan_speed 	= 7500;
+# $cpu_max_fan_speed 	= 7500;
+# $hd_max_fan_speed 	= 7500;
+$cpu_max_fan_speed 	= 3750;
+$hd_max_fan_speed 	= 3750;
 
+# ## CPU FAN DUTY LEVELS
+# ## These levels are used to control the CPU fans
+# $fan_duty_high	= 100;		# percentage on, ie 100% is full speed.
+# $fan_duty_med 	= 60;
+# $fan_duty_low 	= 30;
+
+# ## HD FAN DUTY LEVELS
+# ## These levels are used to control the HD fans
+# $hd_fan_duty_high 	= 100;	# percentage on, ie 100% is full speed.
+# $hd_fan_duty_med_high 	= 80;
+# $hd_fan_duty_med_low	= 50;
+# $hd_fan_duty_low 	= 30;	# some 120mm fans stall below 30.
 
 ## CPU FAN DUTY LEVELS
 ## These levels are used to control the CPU fans
-$fan_duty_high	= 100;		# percentage on, ie 100% is full speed.
-$fan_duty_med 	= 60;
-$fan_duty_low 	= 30;
+$fan_duty_high	= 50;		# percentage on, ie 50% is half speed.
+$fan_duty_med 	= 30;
+$fan_duty_low 	= 15;
 
 ## HD FAN DUTY LEVELS
 ## These levels are used to control the HD fans
-$hd_fan_duty_high 	= 100;	# percentage on, ie 100% is full speed.
-$hd_fan_duty_med_high 	= 80;
-$hd_fan_duty_med_low	= 50;
-$hd_fan_duty_low 	= 30;	# some 120mm fans stall below 30.
+$hd_fan_duty_high 	= 50;	# percentage on, ie 50% is half speed.
+$hd_fan_duty_med_high 	= 40;
+$hd_fan_duty_med_low	= 25;
+$hd_fan_duty_low 	= 15;	# some 120mm fans stall below 30.
 
 
 ## FAN ZONES
@@ -132,8 +146,8 @@ $hd_fan_duty_low 	= 30;	# some 120mm fans stall below 30.
 #
 # 0 = FAN1..5
 # 1 = FANA
-$cpu_fan_zone = 0;
-$hd_fan_zone = 1;
+$cpu_fan_zone = 1;
+$hd_fan_zone = 0;
 
 
 ## FAN HEADERS
@@ -200,6 +214,7 @@ $bmc_fail_count = 0;				# how many times the fans failed verification in the las
 $last_cpu_temp = 0;
 
 use POSIX qw(strftime);
+use List::Util 'max';
 
 # start the controller
 main();
@@ -310,37 +325,50 @@ sub get_hd_list
 
 sub get_hd_temp
 {
-	my $max_temp = 0;
-	
-	foreach my $item (@hd_list)
-	{
-		my $disk_dev = "/dev/$item";
+    my $max_temp = 0;
+    
+    foreach my $item (@hd_list)
+    {
+        my $disk_dev = "/dev/$item";
+        my $command;
 
-		my $command = "smartctl -A $disk_dev | grep -E 'Temperature_Celsius|"Current Drive Temperature"|"Temperature Sensor 1:"'";
-		dprint( 3, "$command\n" );
+        if ($item =~ /nvme/) {
+            $command = "nvme smart-log $disk_dev | grep \"temperature\"";
+        } else {
+            $command = "smartctl -A $disk_dev | grep -E 'Temperature_Celsius|\"Current Drive Temperature\"|\"Temperature Sensor 1:\"'";
+        }
 
-		my $output = `$command`;
-		dprint( 2, "$output");
+        dprint( 3, "$command\n" );
 
-		my @vals = split(" ", $output);
+        my $output = `$command`;
+        dprint( 2, "$output");
 
-		# grab 10th item from the output, which is the hard drive temperature (on Seagate NAS HDs)
-  		my $temp = "$vals[9]";
-		chomp $temp;
+        my $temp;
+
+        if ($item =~ /nvme/) {
+            ($temp) = $output =~ /temperature\s+:\s+(\d+)/;
+            if (!$temp) {
+                dprint(1, "Failed to parse temperature for $disk_dev from output: $output\n");
+            }
+        } else {
+            my @vals = split(" ", $output);
+            $temp = $vals[9];
+        }
+
+        chomp $temp;
         dprint( 3, "temp: $temp\n" );
 
-		
-		if( $temp )
-		{
-			dprint( 1, "$disk_dev: $temp\n");
-			
-			$max_temp = $temp if $temp > $max_temp;
-		}
-	}
+        if( $temp )
+        {
+            dprint( 1, "$disk_dev: $temp\n");
+            
+            $max_temp = $temp if $temp > $max_temp;
+        }
+    }
 
-	dprint(0, "Maximum HD Temperature: $max_temp\n");
+    dprint(0, "Maximum HD Temperature: $max_temp\n");
 
-	return $max_temp;
+    return $max_temp;
 }
 
 ###########################
@@ -509,8 +537,8 @@ sub control_cpu_fan
 {
 	my ($old_cpu_fan_level) = @_;
 
-#	my $cpu_temp = get_cpu_temp_ipmi();	# no longer used, because sysctl is better, and more compatible.
-	my $cpu_temp = get_cpu_temp_direct();
+	my $cpu_temp = get_cpu_temp_ipmi();	# no longer used, because sysctl is better, and more compatible.
+#	my $cpu_temp = get_cpu_temp_direct(); # this is the preferred method, if your hardware is compatible.
 #	my $cpu_temp = 65;			# used to force high speed cpu fan...
 
 	my $cpu_fan_level = decide_cpu_fan_level( $cpu_temp, $old_cpu_fan_level );
@@ -678,14 +706,41 @@ sub get_cpu_temp_direct
 # reads the IPMI 'CPU Temp' field to determine overall CPU temperature
 sub get_cpu_temp_ipmi
 {
-	my $cpu_temp = `$ipmitool sensor get \"CPU Temp\" | awk '/Sensor Reading/{print \$4}'`;
-	chomp $cpu_temp;
+	# my $cpu_temp = `$ipmitool sensor get '\"CPU Temp\" | awk '/Sensor Reading/{print \$4}`;
+	# chomp $cpu_temp;
 
-	dprint( 1, "CPU Temp: $cpu_temp\n");
+	# dprint( 1, "CPU Temp: $cpu_temp\n");
 	
-	$last_cpu_temp = $cpu_temp; # note, this hasn't been cleaned.
-	return $cpu_temp;
+    # Get the number of CPUs (sockets)
+    my $num_cpus = `lscpu | grep 'Socket(s):' | awk '{print \$2}'`;
+    chomp $num_cpus;
+
+    my @cpu_temps;
+
+    # Loop over each CPU and get the temperature
+    for (my $i = 1; $i <= $num_cpus; $i++) {
+        my $cpu_temp = `ipmitool sensor get \"CPU$i Temp\" | awk '/Sensor Reading/{print \$4}'`;
+        chomp $cpu_temp;
+
+        dprint( 1, "CPU$i Temp: $cpu_temp\n");
+        
+        push @cpu_temps, $cpu_temp;
+    }
+
+    # Note, these haven't been cleaned.
+    $last_cpu_temp = $cpu_temps[-1];
+
+    return @cpu_temps;
 }
+
+# Get the CPU temperatures
+my @cpu_temps = get_cpu_temp_ipmi();
+
+# Find the maximum temperature
+my $max_cpu_temp = max @cpu_temps;
+
+# Decide the fan level based on the maximum temperature
+$cpu_fan = decide_cpu_fan_level($max_cpu_temp, $cpu_fan);
 
 sub decide_cpu_fan_level
 {
@@ -751,24 +806,28 @@ sub decide_cpu_fan_level
 # zone,dutycycle%
 sub set_fan_zone_duty_cycle
 {
-	my ( $zone, $duty ) = @_;
-	
-	if( $zone < 0 || $zone > 1 )
-	{
-		bail_with_fans_full( "Illegal Fan Zone" );
-	}
+    my ( $zone, $duty ) = @_;
+    
+    if( $zone < 0 || $zone > 1 )
+    {
+        bail_with_fans_full( "Illegal Fan Zone" );
+    }
 
-	if( $duty < 0 || $duty > 100 )
-	{
-		dprint( 0, "illegal duty cycle, assuming 100%\n");
-		$duty = 100;
-	}
-		
-	dprint( 1, "Setting Zone $zone duty cycle to $duty%\n");
+    if( $duty < 0 || $duty > 100 )
+    {
+        dprint( 0, "illegal duty cycle, assuming 100%\n");
+        $duty = 100;
+    }
+        
+    # Convert $zone and $duty to hexadecimal
+    $zone = sprintf("0x%02x", $zone + 16);  # 16 is added to convert 0 to 0x10 and 1 to 0x11
+    $duty = sprintf("0x%02x", int($duty * 255 / 100));  # Convert percentage to a value out of 255
 
-	`$ipmitool raw 0x30 0x70 0x66 0x01 $zone $duty`;
-	
-	return;
+    dprint( 1, "Setting Zone $zone duty cycle to $duty%\n");
+
+    `$ipmitool raw 0x30 0x91 0x5A 0x3 $zone $duty`;
+    
+    return;
 }
 
 
@@ -854,10 +913,11 @@ sub get_fan_speed
 
 sub reset_bmc
 {
-	#when the BMC reboots, it comes back up in its last fan mode... which should be FULL.
+    #when the BMC reboots, it comes back up in its last fan mode... which should be FULL.
 
-	dprint( 0, "Resetting BMC\n");
-	`$ipmitool bmc reset cold`;
-	
-	return;
+    dprint( 0, "Resetting BMC\n");
+    my $output = `$ipmitool bmc reset cold 2>&1`;
+    dprint( 0, "BMC reset output: $output\n");
+    
+    return;
 }
