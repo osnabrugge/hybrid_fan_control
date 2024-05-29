@@ -13,9 +13,11 @@ sub get_cpu_temp_ipmi
         my $cpu_temp = `ipmitool sensor get \"CPU$i Temp\" | awk '/Sensor Reading/{print \$4}'`;
         chomp $cpu_temp;
 
-        print "CPU$i Temp: $cpu_temp\n";
-        
-        push @cpu_temps, $cpu_temp;
+        # Only push the temperature into the array if it's a number
+        if ($cpu_temp =~ /^\d+$/) {
+            print "CPU$i Temp: $cpu_temp\n";
+            push @cpu_temps, $cpu_temp;
+        }
     }
 
     # Note, these haven't been cleaned.

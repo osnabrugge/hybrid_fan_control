@@ -84,7 +84,7 @@ $low_cpu_temp = 35;		# will go LOW when we fall below 35 again
 ## This is the temperature that we regard as being uncomfortable. The higher this is the
 ## more silent your system.
 ## Note, it is possible for your HDs to go above this... but if your cooling is good, they shouldn't.
-$hd_max_allowed_temp = 40;	# celsius. you will hit 100% duty cycle when you HDs hit this temp.
+$hd_max_allowed_temp = 50;	# celsius. you will hit 100% duty cycle when you HDs hit this temp.
 
 ## CPU TEMP TO OVERRIDE HD FANS
 ## when the CPU climbs above this temperature, the HD fans will be overridden
@@ -107,37 +107,21 @@ $hd_fans_cool_cpu = 1;		# 1 if the hd fans should spin up to cool the cpu, 0 oth
 ## You need to determine the actual max fan speeds that are achieved by the fans
 ## Connected to the cpu_fan_header and the hd_fan_header.
 ## These values are used to verify high/low fan speeds and trigger a BMC reset if necessary.
-# $cpu_max_fan_speed 	= 7500;
-# $hd_max_fan_speed 	= 7500;
-$cpu_max_fan_speed 	= 3750;
-$hd_max_fan_speed 	= 3750;
-
-# ## CPU FAN DUTY LEVELS
-# ## These levels are used to control the CPU fans
-# $fan_duty_high	= 100;		# percentage on, ie 100% is full speed.
-# $fan_duty_med 	= 60;
-# $fan_duty_low 	= 30;
-
-# ## HD FAN DUTY LEVELS
-# ## These levels are used to control the HD fans
-# $hd_fan_duty_high 	= 100;	# percentage on, ie 100% is full speed.
-# $hd_fan_duty_med_high 	= 80;
-# $hd_fan_duty_med_low	= 50;
-# $hd_fan_duty_low 	= 30;	# some 120mm fans stall below 30.
+$cpu_max_fan_speed 	= 7500;
+$hd_max_fan_speed 	= 7500;
 
 ## CPU FAN DUTY LEVELS
 ## These levels are used to control the CPU fans
-$fan_duty_high	= 50;		# percentage on, ie 50% is half speed.
-$fan_duty_med 	= 30;
-$fan_duty_low 	= 15;
+$fan_duty_high	= 100;		# percentage on, ie 100% is full speed.
+$fan_duty_med 	= 40;
+$fan_duty_low 	= 20;
 
 ## HD FAN DUTY LEVELS
 ## These levels are used to control the HD fans
-$hd_fan_duty_high 	= 50;	# percentage on, ie 50% is half speed.
-$hd_fan_duty_med_high 	= 40;
-$hd_fan_duty_med_low	= 25;
-$hd_fan_duty_low 	= 15;	# some 120mm fans stall below 30.
-
+$hd_fan_duty_high 	    = 100;	# percentage on, ie 100% is full speed.
+$hd_fan_duty_med_high 	= 60;
+$hd_fan_duty_med_low	= 40;
+$hd_fan_duty_low 	    = 20;	# some 120mm fans stall below 30.
 
 ## FAN ZONES
 # Your CPU/case fans should probably be connected to the main fan sockets, which are in fan zone zero
@@ -214,7 +198,7 @@ $bmc_fail_count = 0;				# how many times the fans failed verification in the las
 $last_cpu_temp = 0;
 
 use POSIX qw(strftime);
-use List::Util 'max';
+use List::Util qw(maxstr max);
 
 # start the controller
 main();
@@ -706,11 +690,6 @@ sub get_cpu_temp_direct
 # reads the IPMI 'CPU Temp' field to determine overall CPU temperature
 sub get_cpu_temp_ipmi
 {
-	# my $cpu_temp = `$ipmitool sensor get '\"CPU Temp\" | awk '/Sensor Reading/{print \$4}`;
-	# chomp $cpu_temp;
-
-	# dprint( 1, "CPU Temp: $cpu_temp\n");
-	
     # Get the number of CPUs (sockets)
     my $num_cpus = `lscpu | grep 'Socket(s):' | awk '{print \$2}'`;
     chomp $num_cpus;
@@ -722,29 +701,35 @@ sub get_cpu_temp_ipmi
         my $cpu_temp = `ipmitool sensor get \"CPU$i Temp\" | awk '/Sensor Reading/{print \$4}'`;
         chomp $cpu_temp;
 
-        dprint( 1, "CPU$i Temp: $cpu_temp\n");
-        
-        push @cpu_temps, $cpu_temp;
+        # Only push the temperature into the array if it's a number
+        if ($cpu_temp =~ /^\d+$/) {
+            # Only print the temperature if debug level is greater than 1
+            print "CPU$i Temp: $cpu_temp\n" if $debug > 1;
+            push @cpu_temps, $cpu_temp;
+        }
     }
 
-    # Note, these haven't been cleaned.
-    $last_cpu_temp = $cpu_temps[-1];
+    # Find the maximum temperature
+    my $max_cpu_temp = max @cpu_temps;
 
-    return @cpu_temps;
+    # Set $last_cpu_temp to $max_cpu_temp
+    $last_cpu_temp = $max_cpu_temp;
+
+    return $max_cpu_temp;
 }
 
-# Get the CPU temperatures
-my @cpu_temps = get_cpu_temp_ipmi();
-
-# Find the maximum temperature
-my $max_cpu_temp = max @cpu_temps;
+# Get the maximum CPU temperature
+my $max_cpu_temp = get_cpu_temp_ipmi();
 
 # Decide the fan level based on the maximum temperature
 $cpu_fan = decide_cpu_fan_level($max_cpu_temp, $cpu_fan);
 
 sub decide_cpu_fan_level
 {
-	my ($cpu_temp, $cpu_fan) = @_;
+    my ($cpu_temp, $cpu_fan) = @_;
+
+    # Convert $cpu_temp to a number
+    $cpu_temp += 0;
 
 	#if cpu_temp evaluates as "0", its most likely the reading returned rubbish.
 	if ($cpu_temp <= 0) 
